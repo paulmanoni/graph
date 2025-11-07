@@ -6,16 +6,41 @@ import (
 	"time"
 )
 
-// JSONTime is a custom time type for JSON operations
+// JSONTime is a custom time type that handles flexible JSON time formats.
+// It supports both RFC3339 strings and array formats commonly used in some APIs.
+//
+// Supported input formats:
+//   - RFC3339 string: "2024-01-15T14:30:00Z"
+//   - Array format: [year, month, day, hour, minute, second, nanosecond]
+//   - Minimum array: [2024, 1, 15] (time components default to 0)
+//
+// Output format:
+//   - Always RFC3339 string: "2024-01-15T14:30:00Z"
+//
+// Example usage:
+//
+//	type Event struct {
+//	    Name      string         `json:"name"`
+//	    StartTime graph.JSONTime `json:"startTime"`
+//	}
+//
+//	// Accepts: {"startTime": "2024-01-15T14:30:00Z"}
+//	// Accepts: {"startTime": [2024, 1, 15, 14, 30, 0]}
+//	// Outputs: {"startTime": "2024-01-15T14:30:00Z"}
 type JSONTime time.Time
 
-// MarshalJSON implements the json.Marshaler interface
+// MarshalJSON implements json.Marshaler interface.
+// Serializes JSONTime to RFC3339 format string.
 func (t JSONTime) MarshalJSON() ([]byte, error) {
 	stamp := fmt.Sprintf("\"%s\"", time.Time(t).Format(time.RFC3339))
 	return []byte(stamp), nil
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface
+// UnmarshalJSON implements json.Unmarshaler interface.
+// Deserializes from either RFC3339 string or array format.
+//
+// Array format: [year, month, day, hour?, minute?, second?, nanosecond?]
+// Missing time components default to 0. All times are assumed to be UTC.
 func (t *JSONTime) UnmarshalJSON(data []byte) error {
 	// Check for null
 	if string(data) == "null" {
@@ -77,7 +102,16 @@ func (t *JSONTime) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Add a helper method to convert back to time.Time
+// Time converts JSONTime back to the standard time.Time type.
+// This is useful when you need to perform time operations or comparisons.
+//
+// Example:
+//
+//	var event Event
+//	json.Unmarshal(data, &event)
+//	standardTime := event.StartTime.Time()
+//	// Now use standard time operations
+//	if standardTime.After(time.Now()) { ... }
 func (t JSONTime) Time() time.Time {
 	return time.Time(t)
 }

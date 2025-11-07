@@ -171,7 +171,31 @@ func calculateSelectionSetComplexity(selectionSet *ast.SelectionSet, multiplier 
 	return complexity
 }
 
-// ValidateGraphQLQuery validates a GraphQL query string against depth and alias limits
+// ValidateGraphQLQuery validates a GraphQL query against security rules.
+// This function implements multiple layers of protection against malicious or expensive queries.
+//
+// Validation Rules:
+//   - Max Query Depth: 10 levels (prevents deeply nested queries)
+//   - Max Aliases: 4 per query (prevents alias-based DoS attacks)
+//   - Max Complexity: 200 (prevents computationally expensive queries)
+//   - Introspection: Blocked (__schema and __type queries are rejected)
+//
+// Returns an error if:
+//   - Query depth exceeds 10 levels
+//   - Query contains more than 4 aliases
+//   - Query complexity exceeds 200
+//   - Query contains __schema or __type introspection fields
+//   - Query parsing fails (though parsing errors are allowed to pass through)
+//
+// Example usage:
+//
+//	if err := graph.ValidateGraphQLQuery(queryString, schema); err != nil {
+//	    // Reject query with HTTP 400
+//	    return fmt.Errorf("invalid query: %w", err)
+//	}
+//	// Query is safe to execute
+//
+// Enable this in production with GraphContext.EnableValidation = true.
 func ValidateGraphQLQuery(queryString string, schema *graphql.Schema) error {
 	// Handle empty query
 	if queryString == "" {

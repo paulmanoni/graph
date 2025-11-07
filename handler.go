@@ -13,8 +13,18 @@ import (
 	"github.com/graphql-go/handler"
 )
 
-// ExtractBearerToken extracts the Bearer token from the Authorization header
-// Returns empty string if no valid Bearer token is found
+// ExtractBearerToken extracts the Bearer token from the Authorization header.
+// It performs case-insensitive matching for the "Bearer " prefix and trims whitespace.
+//
+// Returns an empty string if:
+//   - The Authorization header is missing
+//   - The header doesn't start with "Bearer " (case-insensitive)
+//   - The token value is empty
+//
+// Example:
+//
+//	// Authorization: Bearer abc123xyz
+//	token := graph.ExtractBearerToken(r) // Returns: "abc123xyz"
 func ExtractBearerToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
@@ -145,6 +155,24 @@ func (w *responseWriterWrapper) sanitizeAndWrite() {
 	_, _ = w.ResponseWriter.Write(body)
 }
 
+// New creates a GraphQL handler from the provided GraphContext.
+// It builds the schema and sets up authentication with token extraction and user details.
+//
+// The handler automatically:
+//   - Extracts tokens using TokenExtractorFn (defaults to Bearer token extraction)
+//   - Fetches user details using UserDetailsFn if provided
+//   - Adds token and details to the root value for access in resolvers
+//
+// Returns an error if schema building fails.
+//
+// Example:
+//
+//	handler, err := graph.New(graph.GraphContext{
+//	    SchemaParams: &graph.SchemaBuilderParams{
+//	        QueryFields: []graph.QueryField{getUserQuery()},
+//	    },
+//	    Playground: true,
+//	})
 func New(graphCtx GraphContext) (*handler.Handler, error) {
 	// Build schema from context
 	schema, err := buildSchemaFromContext(&graphCtx)
@@ -191,9 +219,46 @@ func New(graphCtx GraphContext) (*handler.Handler, error) {
 	return h, nil
 }
 
-// NewHTTP creates a standard http.HandlerFunc with validation and sanitization support
-// This handler is compatible with standard net/http without requiring Gin or other frameworks
-// If schema building fails, it panics (use during initialization)
+// NewHTTP creates a standard http.HandlerFunc with built-in validation and sanitization support.
+// This is the recommended way to create a GraphQL handler for production use.
+//
+// The handler is fully compatible with net/http and any HTTP framework (Gin, Chi, Echo, etc.).
+// If graphCtx is nil, defaults to DEBUG mode with Playground enabled.
+//
+// Behavior:
+//   - In DEBUG mode (DEBUG: true): Skips all validation and sanitization for easier development
+//   - In production (DEBUG: false): Enables validation and sanitization based on configuration
+//   - Panics during initialization if schema building fails (fail-fast approach)
+//
+// Security Features (when DEBUG: false):
+//   - EnableValidation: Validates query depth (max 10), aliases (max 4), complexity (max 200), and blocks introspection
+//   - EnableSanitization: Removes field suggestions from error messages to prevent information disclosure
+//
+// Example:
+//
+//	// Development setup
+//	handler := graph.NewHTTP(&graph.GraphContext{
+//	    SchemaParams: &graph.SchemaBuilderParams{
+//	        QueryFields: []graph.QueryField{getUserQuery()},
+//	    },
+//	    DEBUG:      true,
+//	    Playground: true,
+//	})
+//
+//	// Production setup
+//	handler := graph.NewHTTP(&graph.GraphContext{
+//	    SchemaParams:       &graph.SchemaBuilderParams{...},
+//	    DEBUG:              false,
+//	    EnableValidation:   true,
+//	    EnableSanitization: true,
+//	    Playground:         false,
+//	    UserDetailsFn: func(token string) (interface{}, error) {
+//	        return validateToken(token)
+//	    },
+//	})
+//
+//	http.Handle("/graphql", handler)
+//	http.ListenAndServe(":8080", nil)
 func NewHTTP(graphCtx *GraphContext) http.HandlerFunc {
 	if graphCtx == nil {
 		graphCtx = &GraphContext{DEBUG: true, Playground: true}
