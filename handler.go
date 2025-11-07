@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/handler"
 )
 
@@ -27,6 +28,64 @@ func ExtractBearerToken(r *http.Request) string {
 	}
 
 	return ""
+}
+
+// getDefaultHelloQuery creates a default hello world query
+func getDefaultHelloQuery() QueryField {
+	return NewResolver[string]("hello").
+		WithResolver(func(p graphql.ResolveParams) (interface{}, error) {
+			return "Hello, World!", nil
+		}).BuildQuery()
+}
+
+// getDefaultEchoMutation creates a default echo mutation
+func getDefaultEchoMutation() MutationField {
+	return NewResolver[string]("echo").
+		WithArgs(graphql.FieldConfigArgument{
+			"message": &graphql.ArgumentConfig{
+				Type: graphql.String,
+			},
+		}).
+		WithResolver(func(p graphql.ResolveParams) (interface{}, error) {
+			message, err := GetArgString(p, "message")
+			if err != nil {
+				return "No message provided", nil
+			}
+			return message, nil
+		}).BuildMutation()
+}
+
+// buildSchemaFromContext builds a GraphQL schema from the GraphContext
+// Priority: Schema > SchemaParams > Default hello world schema
+func buildSchemaFromContext(graphCtx *GraphContext) (*graphql.Schema, error) {
+	// If Schema is provided, use it
+	if graphCtx.Schema != nil {
+		return graphCtx.Schema, nil
+	}
+
+	// If SchemaParams is provided, build from it
+	var params SchemaBuilderParams
+	if graphCtx.SchemaParams != nil {
+		params = *graphCtx.SchemaParams
+	} else {
+		// Use default hello world schema
+		params = SchemaBuilderParams{
+			QueryFields: []QueryField{
+				getDefaultHelloQuery(),
+			},
+			MutationFields: []MutationField{
+				getDefaultEchoMutation(),
+			},
+		}
+	}
+
+	// Build schema
+	schema, err := NewSchemaBuilder(params).Build()
+	if err != nil {
+		return nil, err
+	}
+
+	return &schema, nil
 }
 
 // responseWriterWrapper wraps http.ResponseWriter to capture and sanitize responses
@@ -86,14 +145,22 @@ func (w *responseWriterWrapper) sanitizeAndWrite() {
 	_, _ = w.ResponseWriter.Write(body)
 }
 
-func New(graphCtx GraphContext) *handler.Handler {
-	return handler.New(&handler.Config{
-		Schema:     graphCtx.Schema,
+func New(graphCtx GraphContext) (*handler.Handler, error) {
+	// Build schema from context
+	schema, err := buildSchemaFromContext(&graphCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	h := handler.New(&handler.Config{
+		Schema:     schema,
 		Pretty:     graphCtx.Pretty,
 		GraphiQL:   graphCtx.GraphiQL,
 		Playground: graphCtx.Playground,
 		RootObjectFn: func(ctx context.Context, r *http.Request) map[string]interface{} {
-			graphCtx.RootObjectFn(ctx, r)
+			if graphCtx.RootObjectFn != nil {
+				graphCtx.RootObjectFn(ctx, r)
+			}
 
 			// Create root value with token for GraphQL resolvers
 			rootValue := make(map[string]interface{})
@@ -120,12 +187,29 @@ func New(graphCtx GraphContext) *handler.Handler {
 			return rootValue
 		},
 	})
+
+	return h, nil
 }
 
 // NewHTTP creates a standard http.HandlerFunc with validation and sanitization support
 // This handler is compatible with standard net/http without requiring Gin or other frameworks
-func NewHTTP(graphCtx GraphContext) http.HandlerFunc {
-	h := New(graphCtx)
+// If schema building fails, it panics (use during initialization)
+func NewHTTP(graphCtx *GraphContext) http.HandlerFunc {
+	if graphCtx == nil {
+		graphCtx = &GraphContext{DEBUG: true, Playground: true}
+	}
+
+	// Build handler (panic if schema building fails)
+	h, err := New(*graphCtx)
+	if err != nil {
+		panic("failed to build GraphQL schema: " + err.Error())
+	}
+
+	// Get the built schema for validation
+	schema, err := buildSchemaFromContext(graphCtx)
+	if err != nil {
+		panic("failed to build GraphQL schema: " + err.Error())
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Skip validation and sanitization in DEBUG mode
@@ -168,7 +252,7 @@ func NewHTTP(graphCtx GraphContext) http.HandlerFunc {
 
 		// Validate query if enabled
 		if graphCtx.EnableValidation && query != "" {
-			if err := ValidateGraphQLQuery(query, graphCtx.Schema); err != nil {
+			if err := ValidateGraphQLQuery(query, schema); err != nil {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{

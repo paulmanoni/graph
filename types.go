@@ -8,10 +8,20 @@ import (
 )
 
 type GraphContext struct {
-	Schema       *graphql.Schema
-	Pretty       bool
-	GraphiQL     bool
-	Playground   bool
+	// Schema: Provide either Schema OR SchemaParams (not both)
+	// If both are nil, a default "hello world" schema will be created
+	Schema *graphql.Schema
+
+	// SchemaParams: Alternative to Schema - will be built automatically
+	// If nil and Schema is also nil, defaults to hello world query/mutation
+	SchemaParams *SchemaBuilderParams
+
+	Pretty     bool
+	GraphiQL   bool
+	Playground bool
+
+	// DEBUG mode skips validation and sanitization
+	// Default: false (validation enabled)
 	DEBUG        bool
 	RootObjectFn func(ctx context.Context, r *http.Request) map[string]interface{}
 
