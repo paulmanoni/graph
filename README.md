@@ -1,4 +1,4 @@
-# graph
+# go-graph
 
 A modern, secure GraphQL handler for Go with built-in authentication, validation, and an intuitive builder API.
 
